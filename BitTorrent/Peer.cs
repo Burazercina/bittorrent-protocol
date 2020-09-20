@@ -32,47 +32,47 @@ namespace BitTorrent
         }
 
         // Source: https://docs.microsoft.com/en-us/dotnet/api/system.net.sockets.tcplistener
-        public void ConnectToTracker(IPAddress trackerIP, string message)
+        public async void ConnectToTracker(IPAddress trackerIP)
         {
             try
             {
                 // Create a TcpClient.
-                // Note, for this client to work you need to have a TcpServer
-                // connected to the same address as specified by the server, port
-                // combination.
                 int port = 42000;
                 TcpClient client = new TcpClient();
-                client.Connect(trackerIP, port);
-
-                // Translate the passed message into ASCII and store it as a Byte array.
-                byte[] data = Encoding.ASCII.GetBytes(message);
+                await client.ConnectAsync(trackerIP, port);
 
                 // Get a client stream for reading and writing.
-                //  Stream stream = client.GetStream();
-
                 NetworkStream stream = client.GetStream();
 
-                // Send the message to the connected TcpServer.
-                stream.Write(data, 0, data.Length);
+                // Buffer for recieving server response
+                byte[] data = new byte[256];
 
-                Console.WriteLine("Sent: {0}", message);
+                // Recieve number of segments from server
+                int responseLength = await stream.ReadAsync(data, 0, data.Length);
+                string responseData = Encoding.ASCII.GetString(data, 0, responseLength);
+                Console.WriteLine("Received: {0}", responseData);
 
-                // Receive the TcpServer.response.
+                // Update the list of missing segments to contain every segment
+                int numberOfSegments = Convert.ToInt32(responseData);
+                FillMissingSegments(numberOfSegments);
 
-                // Buffer to store the response bytes.
-                data = new byte[256];
+                // Send peer ip and the next missing segment index to server
+                string peerIP = this.IP.ToString();
+                string segmentWanted = this.NextMissing().ToString();
+                string msg = peerIP + " " + segmentWanted;
+                data = Encoding.ASCII.GetBytes(msg);
+                await stream.WriteAsync(data, 0, data.Length);
+                Console.WriteLine("Sent: {0}", msg);
 
-                // String to store the response ASCII representation.
-                string responseData = string.Empty;
-
-                // Read the first batch of the TcpServer response bytes.
-                int bytes = stream.Read(data, 0, data.Length);
-                responseData = Encoding.ASCII.GetString(data, 0, bytes);
+                // Recieve ip of client that has the missing segment
+                responseLength = await stream.ReadAsync(data, 0, data.Length);
+                responseData = Encoding.ASCII.GetString(data, 0, responseLength);
                 Console.WriteLine("Received: {0}", responseData);
 
                 // Close everything.
                 stream.Close();
                 client.Close();
+                Console.WriteLine("Closed everything");
             }
             catch (ArgumentNullException e)
             {
@@ -84,6 +84,11 @@ namespace BitTorrent
             }
         }
 
+        private void FillMissingSegments(int numberOfSegments)
+        {
+            for (int i = 0; i < numberOfSegments; i++)
+                MissingSegments.Add(i);
+        }
         public int NextMissing()
         {
             if (MissingSegments.Count == 0)

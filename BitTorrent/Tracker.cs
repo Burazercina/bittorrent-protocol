@@ -11,16 +11,58 @@ namespace BitTorrent
 {
     class Tracker
     {
-        IPAddress ServerIP;
-        List<Peer> Peers;
+        private IPAddress ServerIP;
+        private List<Peer> Peers;
 
-        int SegmentSize; // In bytes
+        private int SegmentSize; // In bytes
+        private int NumberOfSegments;
 
-        public Tracker(IPAddress ServerIP, int SegmentSize)
+        private string FilePath;
+
+        public Tracker(IPAddress ServerIP, int SegmentSize, int NumberOfSegments, string FilePath)
         {
             this.ServerIP = ServerIP;
-            this.SegmentSize = SegmentSize;
             Peers = new List<Peer>();
+
+            this.SegmentSize = SegmentSize;
+            this.NumberOfSegments = NumberOfSegments;
+
+            this.FilePath = FilePath;
+            
+        }
+
+        // Source: https://stackoverflow.com/questions/3967541/how-to-split-large-files-efficiently
+        // Splits file into segments and returns number of segments
+        public static int SplitFile(string inputFile, int chunkSize, string path)
+        {
+            byte[] buffer = new byte[chunkSize];
+
+            using (Stream input = File.OpenRead(inputFile))
+            {
+                int index = 0;
+                while (input.Position < input.Length)
+                {
+                    using (Stream output = File.Create(path + "\\" + index))
+                    {
+                        int chunkBytesRead = 0;
+                        while (chunkBytesRead < chunkSize)
+                        {
+                            int bytesRead = input.Read(buffer,
+                                                       chunkBytesRead,
+                                                       chunkSize - chunkBytesRead);
+
+                            if (bytesRead == 0)
+                            {
+                                break;
+                            }
+                            chunkBytesRead += bytesRead;
+                        }
+                        output.Write(buffer, 0, chunkBytesRead);
+                    }
+                    index++;
+                }
+                return index;
+            }
         }
 
         public void AddPeer(Peer p)
@@ -28,65 +70,65 @@ namespace BitTorrent
             Peers.Add(p);
         }
 
-        public void CreateServer()
+        public async void CreateServer()
         {
-            // Create TCP Server
             TcpListener server = null;
             try
             {
-                // Set the TcpListener on port 42000.
                 int port = 42000;
 
-                // TcpListener server = new TcpListener(port);
                 server = new TcpListener(ServerIP, port);
-
-                // Start listening for client requests.
                 server.Start();
 
-                // Buffer for reading data
                 byte[] bytes = new byte[256];
                 string data = null;
 
-                // Enter the listening loop.
                 while (true)
                 {
                     Console.Write("Waiting for a connection... ");
 
-                    // Perform a blocking call to accept requests.
-                    // You could also use server.AcceptSocket() here.
-                    TcpClient client = server.AcceptTcpClient();
+                    TcpClient client = await server.AcceptTcpClientAsync();
                     Console.WriteLine("Connected!");
 
                     data = null;
 
-                    // Get a stream object for reading and writing
                     NetworkStream stream = client.GetStream();
+
+                    // Send number of segments to this peer
+                    string numberOfSegments = this.NumberOfSegments.ToString();
+                    byte[] msg = Encoding.ASCII.GetBytes(numberOfSegments);
+                    await stream.WriteAsync(msg, 0, msg.Length);
+                    Console.WriteLine("Sent: {0}", numberOfSegments);
 
                     int i;
 
                     // Loop to receive all the data sent by the client.
-                    while ((i = stream.Read(bytes, 0, bytes.Length)) != 0)
+                    while ((i = await stream.ReadAsync(bytes, 0, bytes.Length)) != 0)
                     {
-                        // Translate data bytes to a ASCII string.
+                        // Recieve peer ip and missing index
                         data = Encoding.ASCII.GetString(bytes, 0, i);
                         Console.WriteLine("Received: {0}", data);
 
-                        // PROTOCOL HERE!
+                        // Parse recieved message
+                        string[] parsedMsg = data.Split(' ');
+                        IPAddress newPeerIP = IPAddress.Parse(parsedMsg[0]);
+                        Peers.Add(new Peer(newPeerIP));
+                        int segmentIndex = Convert.ToInt32(parsedMsg[1]);
 
-                        ////////////////////////////////////////
-                        int segmentIndex = Convert.ToInt32(data);
-
+                        // Loop through every peer to determine who has the segment
+                        string ipToSend = ServerIP.ToString();
                         foreach (Peer peer in Peers)
                         {
                             if (peer.GetAcquiredSegments().Contains(segmentIndex))
                             {
-                                string peerIP = peer.GetIP().ToString();
-                                byte[] msg = Encoding.ASCII.GetBytes(peerIP);
-                                stream.Write(msg, 0, msg.Length);
-                                Console.WriteLine("Sent: {0}", peerIP);
+                                ipToSend = peer.GetIP().ToString();
                             }
                         }
-                        ////////////////////////////////////////
+
+                        // Send ip of peer that has the segment
+                        msg = Encoding.ASCII.GetBytes(ipToSend);
+                        await stream.WriteAsync(msg, 0, msg.Length);
+                        Console.WriteLine("Sent: {0}", ipToSend);
                     }
 
                     // Shutdown and end connection
