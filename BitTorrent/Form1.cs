@@ -20,51 +20,13 @@ namespace BitTorrent
             InitializeComponent();
         }
 
-        // Static functions will be removed and relocated to their respective classes
-
-        // Source: https://stackoverflow.com/questions/3967541/how-to-split-large-files-efficiently
-        public static void SplitFile(string inputFile, int chunkSize, string path)
-        {
-            byte[] buffer = new byte[chunkSize];
-
-            using (Stream input = File.OpenRead(inputFile))
-            {
-                int index = 0;
-                while (input.Position < input.Length)
-                {
-                    using (Stream output = File.Create(path + "\\" + index))
-                    {
-                        int chunkBytesRead = 0;
-                        while (chunkBytesRead < chunkSize)
-                        {
-                            int bytesRead = input.Read(buffer,
-                                                       chunkBytesRead,
-                                                       chunkSize - chunkBytesRead);
-
-                            if (bytesRead == 0)
-                            {
-                                break;
-                            }
-                            chunkBytesRead += bytesRead;
-                        }
-                        output.Write(buffer, 0, chunkBytesRead);
-                    }
-                    index++;
-                }
-            }
-        }
-
-        
-
         private void uploadButton_Click(object sender, EventArgs e)
         {
-            // Create tracker
-            string ip = "127.0.0.1";
-            IPAddress trackerIP = IPAddress.Parse(ip);
-            int segmentSize = 32 * 1024;
-            Tracker tracker = new Tracker(trackerIP, segmentSize);
 
-            // Store torrent in chosen directory
+            int segmentSize = 32 * 1024;
+            string ip = "127.0.0.1";
+
+            // Make directory for tracker
             string trackerPath = Directory.GetParent(Environment.CurrentDirectory).Parent.FullName + "\\Trackers\\" + ip;
             Directory.CreateDirectory(trackerPath);
 
@@ -73,17 +35,25 @@ namespace BitTorrent
             string splitFilePath = trackerPath + "\\File\\";
             Directory.CreateDirectory(splitFilePath);
 
-            // Split file for upload into segments
+            
             if (filePath.Length != 0)
             {
-                SplitFile(filePath, segmentSize, splitFilePath);
                 MessageBox.Show("Splitting complete", "Success");
             }
             else
             {
                 MessageBox.Show("Please specify the path of the file you want to upload", "Error");
+                return;
             }
 
+            // Split file for upload into segments
+            int numberOfSegments = Tracker.SplitFile(filePath, segmentSize, splitFilePath);
+
+            // Create tracker
+            IPAddress trackerIP = IPAddress.Parse(ip);
+            Tracker tracker = new Tracker(trackerIP, segmentSize, numberOfSegments, filePath);
+
+            // Run server for tracker
             tracker.CreateServer();
         }
 
@@ -91,12 +61,20 @@ namespace BitTorrent
         {
             // Get tracker ip from text box
             string ip = trackerIPTextBox.Text;
-            IPAddress trackerIP = IPAddress.Parse(ip);
+            if (ip.Length != 0)
+            {
+                MessageBox.Show("Connecting to " + ip);
+            }
+            else
+            {
+                MessageBox.Show("Please specify the IP address of the tracker", "Error");
+                return;
+            }
 
             // Connect as a peer to the tracker and request the file
+            IPAddress trackerIP = IPAddress.Parse(ip);
             Peer peer = new Peer(IPAddress.Parse("127.0.0.1"));
-            string msg = peer.NextMissing().ToString();
-            peer.ConnectToTracker(trackerIP, msg);
+            peer.ConnectToTracker(trackerIP);
         }
     }
 }
